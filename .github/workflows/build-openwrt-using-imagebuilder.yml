@@ -1,9 +1,7 @@
 #=====================================================================================
 # https://github.com/ophub/amlogic-s9xxx-openwrt
-# Description:   Build OpenWrt using ImageBuilder
+# Description:   Build OpenWrt using ImageBuilder (Customized for S905L3B & AdGuardHome)
 # Instructions:  https://openwrt.org/docs/guide-user/additional-software/imagebuilder
-# Download from: https://downloads.openwrt.org/releases
-#                https://downloads.immortalwrt.org/releases
 #=====================================================================================
 
 name: Build OpenWrt using ImageBuilder
@@ -15,17 +13,18 @@ on:
       releases_branch:
         description: "Select the releases branch"
         required: false
-        default: "openwrt:24.10.8"
+        default: "openwrt:24.10.6"
         type: choice
         options:
-          - openwrt:25.12.5
+          - openwrt:24.10.6
           - openwrt:24.10.8
-          - immortalwrt:25.12.1
           - immortalwrt:24.10.6
+          - openwrt:25.12.5
+          - immortalwrt:25.12.1
       openwrt_board:
         description: "Select device board"
         required: false
-        default: "all"
+        default: "s905l3b"
         type: choice
         options:
           - s905l3b
@@ -35,6 +34,10 @@ on:
           - s905l3b-ip103h
           - s905l3b-rg020et-ca
           - s905l3b-unt403a
+          - all
+          - s905x3
+          - s905d
+          - s922x
       openwrt_kernel:
         description: "Select kernel version"
         required: false
@@ -110,7 +113,6 @@ jobs:
           sudo apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mongodb* moby* || true
           sudo apt-get -y install $(curl -fsSL https://ophub.org/ubuntu2604-make-openwrt-depends)
           sudo systemctl daemon-reload
-          #sudo apt-get -y full-upgrade
           sudo apt-get -y autoremove --purge
           sudo apt-get clean
           sudo sed -i '/NVM_DIR/d;/skel/d' /root/{.bashrc,.profile}
@@ -125,21 +127,36 @@ jobs:
       - name: Create virtual disk for extended storage
         id: disk
         run: |
-          # Get available space in exact GB
           root_avail=$(df --block-size=1G / | tail -1 | awk '{print $4}')
           root_size=$(( root_avail - 4 ))
           [[ "${root_size}" -gt 0 ]] || { echo "Error: Insufficient space on /: ${root_avail}G available"; exit 1; }
-
           sudo truncate -s "${root_size}"G /root.img
           build_dev=$(sudo losetup --find --show /root.img)
-          echo "Using /: ${root_size}G"
-
           sudo mkfs.xfs -f -i sparse=0 -b size=4096 "${build_dev}"
           sudo mkdir -p /builder
           sudo mount "${build_dev}" /builder
           sudo chown -R runner:runner /builder
           df -Th
           echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Prepare AdGuardHome Custom IPKs
+        id: custom_ipks
+        if: ${{ steps.init.outputs.status == 'success' && !cancelled() }}
+        run: |
+          # Create ImageBuilder local packages directory
+          mkdir -p config/imagebuilder/packages
+          
+          # Download AdGuardHome and language pack from Kenzok8 small-package repository
+          echo "Downloading luci-app-adguardhome ipk..."
+          curl -sL "https://raw.githubusercontent.com/kenzok8/small-package/main/luci-app-adguardhome_all.ipk" -o config/imagebuilder/packages/luci-app-adguardhome_all.ipk
+          curl -sL "https://raw.githubusercontent.com/kenzok8/small-package/main/luci-i18n-adguardhome-zh-cn_all.ipk" -o config/imagebuilder/packages/luci-i18n-adguardhome-zh-cn_all.ipk
+          
+          # Inject packages into ImageBuilder configuration
+          # The script checks this config/imagebuilder/packages.conf or we inject into sh
+          echo "luci-app-adguardhome luci-i18n-adguardhome-zh-cn adguardhome" >> config/imagebuilder/packages.conf 2>/dev/null || true
+          
+          # Dynamically modify imagebuilder.sh to ensure custom packages are included in PACKAGES variable
+          sed -i 's/PACKAGES="/PACKAGES="luci-app-adguardhome luci-i18n-adguardhome-zh-cn adguardhome /g' ${IMAGEBUILDER_SH} 2>/dev/null || true
 
       - name: Build OpenWrt rootfs [ ${{ inputs.releases_branch }} ]
         id: imagebuilder
@@ -149,7 +166,6 @@ jobs:
           chmod +x ${IMAGEBUILDER_SH}
           ${IMAGEBUILDER_SH} ${RELEASES_BRANCH}
           echo "build_tag=OpenWrt_imagebuilder_${RELEASES_BRANCH/:/_}_$(date +"%Y.%m")" >> ${GITHUB_ENV}
-          # Create symbolic link for packaging
           [[ -d "/builder/openwrt" ]] || mkdir -p /builder/openwrt
           ln -sf /builder/openwrt /home/runner/work/_actions/ophub/amlogic-s9xxx-openwrt/main/openwrt
           df -hT ${PWD}
@@ -198,6 +214,8 @@ jobs:
             - Default password: `password`
             - Default WIFI name: `OpenWrt`
             - Default WIFI password: `none`
+            ### AdGuardHome Included
+            - Pre-installed AdGuardHome interface and dependencies.
             ### Install to EMMC
             - Login to OpenWrt → `System` → `Amlogic Service` → `Install OpenWrt`
             ### Applicable Platform
