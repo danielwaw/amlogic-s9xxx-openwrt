@@ -1,0 +1,25 @@
+name: Build AdGuardHome IPK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build IPK using OpenWrt SDK
+        uses: openwrt/ghaction-sdk@v1
+        with:
+          arch: 'aarch64_cortex-a53'
+          sdk: 'https://downloads.openwrt.org/releases/24.10.0/targets/armsr/armv8/openwrt-sdk-24.10.0-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz'
+          feed-pkgs: 'https://github.com/kenzok8/openwrt-packages.git'
+          PACKAGES: 'luci-app-adguardhome'
+
+      - name: Upload IPK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adguardhome-ipk
+          path: bin/packages/aarch64_cortex-a53/base/*.ipk
