@@ -11,26 +11,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build IPK with Official OpenWrt 24.10 SDK
+      - name: Install SDK build dependencies
         run: |
-          # 使用 OpenWrt 24.10 官方 aarch64 (armsr/armv8) SDK 容器运行编译
-          docker run --rm -v ${{ github.workspace }}:/builder -w /builder openwrt/sdk:24.10.0-armsr-armv8 bash -c "
-            # 1. 更新基础依赖 feeds
-            ./scripts/feeds update -a
-            ./scripts/feeds install -a
+          sudo apt-get update
+          sudo apt-get install -y zstd build-essential ccache gettext git libncurses5-dev libssl-dev rsync unzip zlib1g-dev
 
-            # 2. 克隆 kenzok8 源码仓库到 package 目录
-            git clone --depth 1 https://github.com/kenzok8/openwrt-packages.git package/kenzok8-pkgs
+      - name: Download and extract OpenWrt 24.10.0 SDK
+        run: |
+          mkdir -p sdk
+          SDK_URL="https://downloads.openwrt.org/releases/24.10.0/targets/armsr/armv8/openwrt-sdk-24.10.0-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+          echo "Downloading SDK from ${SDK_URL}..."
+          curl -fsSL "${SDK_URL}" -o sdk.tar.zst
+          tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
+          rm -f sdk.tar.zst
 
-            # 3. 开启 AdGuardHome 及其界面配置选项
-            make defconfig
-            
-            # 4. 仅编译 luci-app-adguardhome 插件
-            make package/kenzok8-pkgs/luci-app-adguardhome/compile V=s -j\$(nproc)
-          "
+      - name: Compile luci-app-adguardhome from kenzok8 repository
+        run: |
+          cd sdk
+          # 1. 更新并安装基础依赖 Feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-      - name: Collect and Upload IPK Artifacts
+          # 2. 克隆指定的 kenzok8 源码仓库
+          git clone --depth 1 https://github.com/kenzok8/openwrt-packages.git package/kenzok8-pkgs
+
+          # 3. 生成编译配置并精确定位编译该插件
+          make defconfig
+          make package/kenzok8-pkgs/luci-app-adguardhome/compile V=s -j$(nproc)
+
+      - name: Upload IPK Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-adguardhome-ipk
-          path: bin/packages/*/kenzok8-pkgs/*.ipk
+          path: sdk/bin/packages/*/*/*.ipk
