@@ -1,23 +1,36 @@
-name: Build AdGuardHome IPK
+name: Build Custom AdGuardHome IPK
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-ipk:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build IPK using OpenWrt SDK
-        uses: sbwml/openwrt-ghaction-sdk@v1
-        with:
-          arch: 'aarch64_cortex-a53'
-          sdk: 'https://downloads.openwrt.org/releases/24.10.0/targets/armsr/armv8/openwrt-sdk-24.10.0-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz'
-          feed-pkgs: 'https://github.com/kenzok8/openwrt-packages.git'
-          PACKAGES: 'luci-app-adguardhome'
-
-      - name: Check generated IPK
+      - name: Build IPK with Official OpenWrt 24.10 SDK
         run: |
-          ls -la bin/packages/*/
+          # 使用 OpenWrt 24.10 官方 aarch64 (armsr/armv8) SDK 容器运行编译
+          docker run --rm -v ${{ github.workspace }}:/builder -w /builder openwrt/sdk:24.10.0-armsr-armv8 bash -c "
+            # 1. 更新基础依赖 feeds
+            ./scripts/feeds update -a
+            ./scripts/feeds install -a
+
+            # 2. 克隆 kenzok8 源码仓库到 package 目录
+            git clone --depth 1 https://github.com/kenzok8/openwrt-packages.git package/kenzok8-pkgs
+
+            # 3. 开启 AdGuardHome 及其界面配置选项
+            make defconfig
+            
+            # 4. 仅编译 luci-app-adguardhome 插件
+            make package/kenzok8-pkgs/luci-app-adguardhome/compile V=s -j\$(nproc)
+          "
+
+      - name: Collect and Upload IPK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-adguardhome-ipk
+          path: bin/packages/*/kenzok8-pkgs/*.ipk
