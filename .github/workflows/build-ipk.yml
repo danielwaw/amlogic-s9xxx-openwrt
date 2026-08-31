@@ -16,7 +16,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zstd build-essential ccache gettext git libncurses5-dev libssl-dev rsync unzip zlib1g-dev
 
-      - name: Download and extract OpenWrt 24.10.0 SDK
+      - name: Download and extract OpenWrt 24.10 SDK
         run: |
           mkdir -p sdk
           SDK_URL="https://downloads.openwrt.org/releases/24.10.0/targets/armsr/armv8/openwrt-sdk-24.10.0-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
@@ -28,19 +28,25 @@ jobs:
       - name: Compile luci-app-adguardhome from kenzok8 repository
         run: |
           cd sdk
-          # 1. 更新并安装基础依赖 Feeds
+          
+          # 1. 以正规软件源 (feeds) 方式注入 kenzok8 仓库
+          echo "src-git kenzok8 https://github.com/kenzok8/openwrt-packages.git" >> feeds.conf.default
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
-          # 2. 克隆指定的 kenzok8 源码仓库
-          git clone --depth 1 https://github.com/kenzok8/openwrt-packages.git package/kenzok8-pkgs
-
-          # 3. 生成编译配置并精确定位编译该插件
+          
+          # 2. 针对性安装 adguardhome，SDK 会自动解析并绑定所有依赖
+          ./scripts/feeds install luci-app-adguardhome
+          
+          # 3. 生成配置
           make defconfig
-          make package/kenzok8-pkgs/luci-app-adguardhome/compile V=s -j$(nproc)
+          
+          # 4. 采用单线程并开启详细日志 (V=s -j1) 编译，确保任何错误都会直接阻断并暴露
+          make package/luci-app-adguardhome/compile V=s -j1
 
-      - name: Upload IPK Artifacts
+      - name: Collect and Upload IPK Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-adguardhome-ipk
-          path: sdk/bin/packages/*/*/*.ipk
+          # 使用全局通配符，无论它生成在 aarch64 还是 all 文件夹，全部一网打尽
+          path: |
+            sdk/bin/packages/**/luci-app-adguardhome*.ipk
+            sdk/bin/packages/**/adguardhome*.ipk
